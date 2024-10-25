@@ -30,19 +30,22 @@ graph LR
 ## 🌟 Features
 
 - Round-robin load balancing algorithm
+- Real-time health monitoring of backend servers
+- Automatic failover for unhealthy servers
 - Multiple backend server support
 - Easy-to-use test server implementation
 - Concurrent request handling
 - Simple setup and deployment
 - Detailed logging and monitoring
+- Health status toggle for testing scenarios
 
 ## 📁 Project Structure
 
 ```
 loadbalancer/
-├── main.go              # Load balancer implementation
+├── main.go              # Load balancer implementation with health checks
 ├── servers/
-│   └── main.go         # Test server implementation
+│   └── main.go         # Test server implementation with health endpoints
 ├── start_servers.sh    # Script to start multiple test servers
 └── README.md           # This file
 ```
@@ -65,7 +68,7 @@ cd load_balancer
 
 2. Make the start script executable:
 ```bash
-chmod +x start-servers.sh
+chmod +x start_servers.sh
 ```
 
 ### Running the Project
@@ -84,7 +87,31 @@ The load balancer will start on port 8080.
 
 3. Test the setup:
 ```bash
+# Check load balancer health
+curl http://localhost:8080/health
+
+# Test round-robin distribution
 curl http://localhost:8080/test
+```
+
+### Health Check System
+
+#### Endpoints
+- `/health` - Returns server health status
+- `/toggle` - Toggles server health (test servers only)
+
+#### Testing Health Checks
+```bash
+# Check individual server health
+curl http://localhost:8081/health
+curl http://localhost:8082/health
+curl http://localhost:8083/health
+
+# Simulate server failure
+curl http://localhost:8081/toggle
+
+# Observe load balancer avoiding unhealthy server
+curl http://localhost:8080/
 ```
 
 ### Stopping the Servers
@@ -101,31 +128,41 @@ Stop the load balancer by pressing `Ctrl+C` in its terminal.
 ### Load Balancer Configuration
 - Default port: 8080
 - Backend servers: http://localhost:8081, 8082, 8083
-- Strategy: Round-robin
+- Strategy: Round-robin with health checks
+- Health check interval: 10 seconds
+- Failure threshold: 3 consecutive failures
 
 ### Test Server Configuration
 - Default ports: 8081, 8082, 8083
 - Custom port can be specified using the `-port` flag
-- Each server has unique identification in responses
+- Health check endpoint: `/health`
+- Health toggle endpoint: `/toggle`
+- Unique server identification in responses
 
 ## 🔍 How It Works
 
 ### Load Balancer
 1. Receives incoming HTTP requests
-2. Selects the next available backend server using round-robin
+2. Selects the next available healthy server using round-robin
 3. Forwards the request to the selected server
 4. Returns the response to the client
 
+### Health Monitoring
+1. Performs health checks every 10 seconds
+2. Marks server as unhealthy after 3 consecutive failures
+3. Automatically recovers servers when they become healthy
+4. Skips unhealthy servers during load balancing
+
 ### Test Servers
 - Each server runs independently
-- Provides detailed request information in responses
+- Provides health check endpoint
+- Allows manual health status toggling
 - Logs all incoming requests
 - Identifies itself in responses and headers
 
 ## 📊 Testing
 
-Basic testing can be performed using curl:
-
+### Basic Testing
 ```bash
 # Send multiple requests to see round-robin in action
 for i in {1..6}; do
@@ -134,39 +171,53 @@ for i in {1..6}; do
 done
 ```
 
-Expected output will show responses from different backend servers in rotation.
+### Health Check Testing
+```bash
+# Monitor server health
+watch -n 1 'curl -s http://localhost:8080/health'
+
+# Simulate server failures
+curl http://localhost:8081/toggle
+```
 
 ## 🛠️ Advanced Usage
 
-### Custom Port Configuration
-Start a test server on a custom port:
-```bash
-go run servers/main.go -port 8084
-```
+### Custom Health Check Configuration
+You can modify the health check parameters in the code:
+- Check interval (default: 10 seconds)
+- Failure threshold (default: 3 attempts)
+- Timeout duration (default: 5 seconds)
 
-### Load Testing
-Using Apache Benchmark (ab):
+### Load Testing with Health Checks
 ```bash
+# Install Apache Benchmark
+sudo apt-get install apache2-utils
+
+# Run load test
 ab -n 1000 -c 10 http://localhost:8080/
 ```
 
-## 🔒 Limitations
+## 🔒 Current Limitations
 
 - Basic round-robin strategy only
 - No persistent connections
 - No SSL/TLS support
-- No advanced health checking
+- Fixed health check parameters
 - No configuration file support
+- Basic health check criteria (HTTP 200 only)
 
 ## 🚧 Future Improvements
 
-- [ ] Add health checks for backend servers
+- [ ] Add advanced health check criteria (CPU, memory, response time)
 - [ ] Implement weighted round-robin
 - [ ] Add configuration file support
 - [ ] Implement SSL/TLS support
-- [ ] Add metrics and monitoring
+- [ ] Add metrics and monitoring dashboard
 - [ ] Docker containerization
 - [ ] Advanced load balancing strategies
+- [ ] Customizable health check parameters
+- [ ] Health check history and trending
+- [ ] Graceful server removal and addition
 
 ## 📝 Contributing
 
