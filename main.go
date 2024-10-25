@@ -6,6 +6,8 @@ import (
   "net/url"
   "net/http/httputil"
   "sync"
+  "time"
+  "fmt"
 )
 
 //a backend server
@@ -13,6 +15,26 @@ type Server struct{
   URL *url.URL 
   Alive bool 
   ReverseProxy *httputil.ReverseProxy 
+  mux sync.RWMutex
+  failures int
+}
+
+func (s *Server) SetAlive(alive bool){
+  s.mux.Lock()
+  s.Alive = alive
+  if alive{
+    s.failures = 0
+  }
+
+  s.mux.Unlock()
+}
+
+func (s *Server) IsAlive()bool{
+  s.mux.RLock()
+  alive := s.Alive
+  s.mux.RUnlock()
+
+  return alive 
 }
 
 //server pool holding servers
@@ -40,27 +62,83 @@ func (sp *ServerPool) AddServer(serverUrl string) error{
   sp.servers = append(sp.servers, &server)
   sp.mutex.Unlock()
 
+  //start health checking
+  go sp.healthCheck(&server)
+
   return nil
 }
+
+
 
 //get next server using round-robin fashion
 func(sp *ServerPool) GetNextServer() *Server{
   sp.mutex.Lock()
   defer sp.mutex.Unlock()
   
-  //reset counter if we've reached the end
-  if sp.current >= len(sp.servers){
-    sp.current = 0
+  //loop until got an alive server of end of servers 
+  for i := 0; i < len(sp.servers); i++{
+    sp.current = (sp.current + 1) % len(sp.servers)
+    server := sp.servers[sp.current]
+
+    if server.IsAlive(){
+      return server 
+    }
   }
+  
+  return nil
+}
 
-  server := sp.servers[sp.current]
-  sp.current++
+func (sp *ServerPool) healthCheck(server *Server) {
+	client := http.Client{
+		Timeout: 5 * time.Second,
+	}
 
-  return server
+	for {
+		resp, err := client.Get(fmt.Sprintf("%s/health", server.URL.String()))
+		status := false
+
+		if err != nil {
+			log.Printf("Health check failed for %s: %v", server.URL, err)
+		} else {
+			if resp.StatusCode == http.StatusOK {
+				status = true
+			}
+			resp.Body.Close()
+		}
+
+		// Update server status
+		server.mux.Lock()
+		if !status {
+			server.failures++
+			if server.failures >= 3 { // Mark as dead after 3 consecutive failures
+				if server.Alive {
+					log.Printf("Server %s is now offline", server.URL)
+				}
+				server.Alive = false
+			}
+		} else {
+			if !server.Alive {
+				log.Printf("Server %s is back online", server.URL)
+			}
+			server.Alive = true
+			server.failures = 0
+		}
+		server.mux.Unlock()
+
+		// Sleep before next health check
+		time.Sleep(10 * time.Second)
+	}
 }
 
 //handle the incoming requests
 func (sp *ServerPool) LoadBalanceHandler(w http.ResponseWriter, r *http.Request){
+  //skip health chekcs from being proxied
+  if r.URL.Path == "/health" {
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("Load balancer is healthy\n"))
+    return
+  }
+
   server := sp.GetNextServer()
   if server != nil{
     server.ReverseProxy.ServeHTTP(w, r)
@@ -70,6 +148,7 @@ func (sp *ServerPool) LoadBalanceHandler(w http.ResponseWriter, r *http.Request)
   http.Error(w, "No servers availables", http.StatusServiceUnavailable)
 }
 
+//main function
 func main (){
   //create a new server
   serverPool := &ServerPool{
@@ -99,3 +178,5 @@ func main (){
     log.Fatal(err) 
   }
 }
+
+
